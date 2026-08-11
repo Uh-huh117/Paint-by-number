@@ -11,6 +11,7 @@ Deployment and Architecture;
 -Web-Based Execution: Designed as a single-file Single-Page Application (SPA) deployable via GitHub Pages.
 
 -Optimized Rendering Engine: Utilizes an offscreen canvas and direct ImageData manipulation with hardware acceleration to minimize latency across large grids.
+
 -Image Conversion and Customization
 
 -Pixel Art Conversion: Converts standard raster images into pixel art grids utilizing K-Means color clustering algorithms.
