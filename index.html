@@ -4,6 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Classic Paint By Numbers</title>
+  
+  <!-- Web App & PWA Metadata -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#1e1e2d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="PaintByNumbers">
+  <link rel="apple-touch-icon" href="icon-512.png">
+
   <style>
     :root {
       /* Dark Theme Colors */
@@ -740,6 +749,21 @@ const app = {
 };
 
 window.onload = () => app.init();
+</script>
+
+<!-- Register Service Worker for PWA installation -->
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js')
+        .then(registration => {
+          console.log('ServiceWorker registration successful');
+        })
+        .catch(err => {
+          console.log('ServiceWorker registration failed: ', err);
+        });
+    });
+  }
 </script>
 </body>
 </html>
