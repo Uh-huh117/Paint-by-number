@@ -47,10 +47,14 @@
     .progress-fill { height: 100%; background: #10b981; transition: width 0.3s; }
     
     /* Create Setup */
-    #create-setup { padding: 30px; max-width: 500px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; flex: 1; justify-content: center; }
+    #create-setup { padding: 30px; max-width: 500px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; flex: 1; overflow-y: auto; justify-content: center; }
     .control-group { display: flex; flex-direction: column; gap: 8px; }
     input[type=range] { width: 100%; accent-color: var(--accent); }
     
+    /* Live Preview Box */
+    #preview-container { display: none; text-align: center; margin-top: 10px; border: 1px solid var(--border-color); padding: 12px; border-radius: 8px; background: rgba(0,0,0,0.3); }
+    #preview-canvas { max-width: 100%; max-height: 220px; border-radius: 4px; image-rendering: pixelated; border: 1px solid var(--border-color); background: #000; margin-top: 8px; }
+
     /* Paint Workspace */
     #paint-workspace { flex: 1; position: relative; display: flex; overflow: hidden; background: #0b0c10; }
     #paint-workspace.completed { background: #000; }
@@ -115,17 +119,27 @@
     <div id="create-setup">
       <div class="control-group">
         <label>Upload Image:</label>
-        <input type="file" id="image-upload" accept="image/*">
+        <input type="file" id="image-upload" accept="image/*" onchange="app.loadedPreviewImg = null; if(app.isPreviewActive) app.triggerPreviewUpdate();">
       </div>
       <div class="control-group">
         <label>Max Colors: <span id="color-val">30</span></label>
-        <input type="range" id="color-slider" min="2" max="120" value="30" oninput="document.getElementById('color-val').innerText=this.value">
+        <input type="range" id="color-slider" min="2" max="120" value="30" oninput="document.getElementById('color-val').innerText=this.value; app.triggerPreviewUpdate();">
       </div>
       <div class="control-group">
         <label>Complexity (Max Pixels): <span id="pixel-val">10000</span></label>
-        <input type="range" id="pixel-slider" min="1000" max="40000" step="1000" value="10000" oninput="document.getElementById('pixel-val').innerText=this.value">
+        <input type="range" id="pixel-slider" min="1000" max="80000" step="1000" value="10000" oninput="document.getElementById('pixel-val').innerText=this.value; app.triggerPreviewUpdate();">
       </div>
-      <button onclick="app.generateProject()" style="padding: 12px; font-size: 1.1rem; margin-top: 10px;">Generate Paint by Numbers</button>
+
+      <div style="display: flex; gap: 10px; margin-top: 5px;">
+        <button onclick="app.generateProject()" style="flex: 1; padding: 12px; font-size: 1rem;">Generate Painting</button>
+        <button class="secondary" onclick="app.togglePreview()" style="padding: 12px; font-size: 1rem;">👁️ Preview</button>
+      </div>
+
+      <!-- Live Preview Container -->
+      <div id="preview-container">
+        <h3 style="font-size: 0.9rem; color: var(--accent);">Final Product Preview</h3>
+        <canvas id="preview-canvas"></canvas>
+      </div>
     </div>
   </div>
 
@@ -155,7 +169,7 @@
           </div>
           <div class="toolbar-group" style="margin-top: 10px;">
             <label>Brush (<span id="brush-val">1</span>x<span id="brush-val2">1</span>)</label>
-            <input type="range" id="brush-size" min="1" max="7" step="2" value="1" oninput="app.updateBrushSize(this.value)" style="width: 100px;">
+            <input type="range" id="brush-size" min="1" max="11" step="2" value="1" oninput="app.updateBrushSize(this.value)" style="width: 100px;">
           </div>
         </div>
         <div class="color-list" id="palette-list"></div>
@@ -193,6 +207,11 @@ const app = {
   initialTransformY: 0,
   pinchCenterX: 0,
   pinchCenterY: 0,
+
+  // Preview state
+  isPreviewActive: false,
+  previewTimer: null,
+  loadedPreviewImg: null,
 
   init() {
     this.canvas = document.getElementById('main-canvas');
@@ -305,28 +324,77 @@ const app = {
     }
   },
 
-  /* --- PROJECT GENERATION --- */
-  async generateProject() {
-    const file = document.getElementById('image-upload').files[0];
-    if (!file) return alert("Please select an image.");
-    
-    const maxColors = parseInt(document.getElementById('color-slider').value);
-    const maxPixels = parseInt(document.getElementById('pixel-slider').value);
-    
-    this.showLoading("Processing image...");
-    
-    setTimeout(() => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => this.processImage(img, maxColors, maxPixels);
-        img.src = e.target.result;
-      };
-      reader.readAsDataURL(file);
-    }, 50);
+  /* --- PREVIEW & QUANTIZATION --- */
+  togglePreview() {
+    const container = document.getElementById('preview-container');
+    this.isPreviewActive = !this.isPreviewActive;
+    container.style.display = this.isPreviewActive ? 'block' : 'none';
+    if(this.isPreviewActive) {
+      this.triggerPreviewUpdate();
+    }
   },
 
-  processImage(img, maxColors, maxPixels) {
+  triggerPreviewUpdate() {
+    if(!this.isPreviewActive) return;
+    clearTimeout(this.previewTimer);
+    this.previewTimer = setTimeout(() => this.renderPreview(), 150);
+  },
+
+  async renderPreview() {
+    const file = document.getElementById('image-upload').files[0];
+    if (!file) {
+      alert("Please select an image first.");
+      this.togglePreview();
+      return;
+    }
+
+    const img = await this.getLoadedImage(file);
+    const maxColors = parseInt(document.getElementById('color-slider').value);
+    const maxPixels = parseInt(document.getElementById('pixel-slider').value);
+
+    const q = this.quantizeImage(img, maxColors, maxPixels);
+    if (!q) return;
+
+    const pCanvas = document.getElementById('preview-canvas');
+    pCanvas.width = q.w;
+    pCanvas.height = q.h;
+    const pCtx = pCanvas.getContext('2d');
+    const imgData = pCtx.createImageData(q.w, q.h);
+    const d = imgData.data;
+
+    for (let i = 0; i < q.pixelMap.length; i++) {
+      const idx = i * 4;
+      const cIdx = q.pixelMap[i];
+      const rgb = q.centroids[cIdx];
+      d[idx] = rgb[0];
+      d[idx+1] = rgb[1];
+      d[idx+2] = rgb[2];
+      d[idx+3] = 255;
+    }
+    pCtx.putImageData(imgData, 0, 0);
+  },
+
+  getLoadedImage(file) {
+    return new Promise((resolve) => {
+      if (this.loadedPreviewImg && this.loadedPreviewImg.fileRef === file) {
+        resolve(this.loadedPreviewImg);
+      } else {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const img = new Image();
+          img.onload = () => {
+            img.fileRef = file;
+            this.loadedPreviewImg = img;
+            resolve(img);
+          };
+          img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+  },
+
+  quantizeImage(img, maxColors, maxPixels) {
     const ratio = img.width / img.height;
     let w = Math.round(Math.sqrt(maxPixels * ratio));
     let h = Math.round(maxPixels / w);
@@ -345,6 +413,8 @@ const app = {
       if(data[i+3] > 128) samples.push([data[i], data[i+1], data[i+2]]);
     }
     
+    if(samples.length === 0) return null;
+
     let centroids = [];
     for(let i=0; i<maxColors; i++) centroids.push(samples[Math.floor(Math.random() * samples.length)]);
     
@@ -376,19 +446,41 @@ const app = {
       pixelMap[i/4] = minIdx;
     }
 
-    const project = {
-      id: 'proj_' + Date.now(),
-      width: w, height: h,
-      palette: centroids,
-      pixels: pixelMap.join(','),
-      painted: new Array(w * h).fill(0).join(''),
-      thumbnail: tempCanvas.toDataURL()
-    };
+    return { w, h, centroids, pixelMap, tempCanvas };
+  },
+
+  /* --- PROJECT GENERATION --- */
+  async generateProject() {
+    const file = document.getElementById('image-upload').files[0];
+    if (!file) return alert("Please select an image.");
     
-    this.projects.push(project);
-    this.saveProjects();
-    this.hideLoading();
-    this.openProject(project.id);
+    const maxColors = parseInt(document.getElementById('color-slider').value);
+    const maxPixels = parseInt(document.getElementById('pixel-slider').value);
+    
+    this.showLoading("Processing image...");
+    
+    setTimeout(async () => {
+      const img = await this.getLoadedImage(file);
+      const q = this.quantizeImage(img, maxColors, maxPixels);
+      if(!q) {
+        this.hideLoading();
+        return alert("Could not process image.");
+      }
+
+      const project = {
+        id: 'proj_' + Date.now(),
+        width: q.w, height: q.h,
+        palette: q.centroids,
+        pixels: q.pixelMap.join(','),
+        painted: new Array(q.w * q.h).fill(0).join(''),
+        thumbnail: q.tempCanvas.toDataURL()
+      };
+      
+      this.projects.push(project);
+      this.saveProjects();
+      this.hideLoading();
+      this.openProject(project.id);
+    }, 50);
   },
 
   /* --- PAINT WORKSPACE --- */
